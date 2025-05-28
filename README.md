@@ -1,77 +1,10 @@
-
 DECLARE @StepId int 
 DECLARE @ReportName VARCHAR(100)
 DECLARE @StepName VARCHAR(100)
 
--- Remove "FACES Error File from BRDCRP.DC35Z6" step in "RBC Maintenance" job
-
-SET @StepId = 0
-SET @ReportName = 'RBC Maintenance' 
-SET @StepName = 'FACES Error File from BRDCRP.DC35Z6' 
-
-SELECT   
-   @StepId = step_id
-FROM 
-   msdb..sysjobs a 
-      join msdb..sysjobsteps b on a.job_id = b.job_id
-where
-   a.name  = @ReportName and 
-   b.step_name = @StepName
-   
-IF @StepId > 0 
-BEGIN
-   EXEC msdb.dbo.sp_delete_jobstep  @job_name = @ReportName,  @step_id = @StepId
-END
-;
-
-
--- Remove "FACES (FACEBRIEF) Errors from ARDCRP.DC85Z1" step in "RBC Maintenance" job
-
-SET @StepId = 0
-SET @ReportName = 'RBC Maintenance' 
-SET @StepName = 'FACES (FACEBRIEF) Errors from ARDCRP.DC85Z1' 
-
-SELECT   
-   @StepId = step_id
-FROM 
-   msdb..sysjobs a 
-      join msdb..sysjobsteps b on a.job_id = b.job_id
-where
-   a.name  = @ReportName and 
-   b.step_name = @StepName
-   
-IF @StepId > 0 
-BEGIN
-   EXEC msdb.dbo.sp_delete_jobstep  @job_name = @ReportName,  @step_id = @StepId
-END
-;
-
--- Remove "FACES Error file from ARDCRP.DC64Z1" step in "RBC Maintenance" job
-
-SET @StepId = 0
-SET @ReportName = 'RBC Maintenance' 
-SET @StepName = 'FACES Error file from ARDCRP.DC64Z1' 
-
-SELECT   
-   @StepId = step_id
-FROM 
-   msdb..sysjobs a 
-      join msdb..sysjobsteps b on a.job_id = b.job_id
-where
-   a.name  = @ReportName and 
-   b.step_name = @StepName
-   
-IF @StepId > 0 
-BEGIN
-   EXEC msdb.dbo.sp_delete_jobstep  @job_name = @ReportName,  @step_id = @StepId
-END
-;
-
--- Remove "Error 41" step in "RBC Maintenance" job
-
-SET @StepId = 0
-SET @ReportName = 'RBC Maintenance' 
-SET @StepName = 'Error 41' 
+SET @StepId = 3
+SET @ReportName = 'Process Cases' 
+SET @StepName = 'Move Future AS cases back to EDIT' 
 
 SELECT   
    @StepId = step_id
@@ -84,98 +17,103 @@ where
    
 IF @StepId > 0 
 BEGIN
-   EXEC msdb.dbo.sp_delete_jobstep  @job_name = @ReportName,  @step_id = @StepId
-END
-;
+   EXEC msdb.dbo.sp_update_jobstep  @job_name = @ReportName,  @step_id = @StepId,	@command=N'DECLARE @nCaseId       INT
+DECLARE @sClaim        VARCHAR(100)
+DECLARE @sStatus       VARCHAR(10)
+DECLARE @sSpecialist   VARCHAR(200)
+DECLARE @sReviewer     VARCHAR(200)
+DECLARE @sRecipients   VARCHAR(400)
 
--- Add new step "JANUS Triggered Claims Report" in "RBC Maintenance" job
+DECLARE @sSubject      VARCHAR(100)
+DECLARE @sMessage      VARCHAR(1000)
+DECLARE @CutOffDate DATETIME
+DECLARE @CheckDate DATETIME
 
-SET @StepId = 0
-SET @ReportName = 'RBC Maintenance' 
-SET @StepName = 'JANUS Triggered Claims Report' 
+DECLARE @rc            INT
+DECLARE @Msg           VARCHAR(1000)
 
+   /*
+   Start - Get REPORT Email information
+   */
+   
+   --DECLARE @rc int
+   DECLARE @Recipients                       VARCHAR(1000) 
+   DECLARE @Copy                                VARCHAR(1000) 
+   DECLARE @BlindCopy                         VARCHAR(1000) 
+   DECLARE @ErrorRecipients                 VARCHAR(1000) 
+   DECLARE @AdminRecipients               VARCHAR(1000) 
+   DECLARE @sMsg VARCHAR(2000)
+   EXEC spGetReportEMailAddresses '''', @Recipients OUTPUT, @Copy OUTPUT, @BlindCopy OUTPUT, @ErrorRecipients OUTPUT, @AdminRecipients OUTPUT, @sMsg OUTPUT
+   
+   /*
+   Complete - Get REPORT Email information
+   */
 
--- Since the last step added make the last step SUCCESS/FAIL flow.
-
-SELECT   
-   @StepId = Max(step_id) + 1
+SELECT 
+   @CutOffDate = MIN(CutOffDate)
 FROM 
-   msdb..sysjobs a 
-      join msdb..sysjobsteps b on a.job_id = b.job_id
-where
-   a.name  = @ReportName 
+   rtblCutOff WHERE CutOffDate > GetDate() - 1  
 
-IF @StepId > 0 
+SET @CutOffDate = DATEADD(m, 1, @CutOffDate)
+
+SET @CheckDate = CAST(MONTH(@CutOffDate) AS VARCHAR(2)) + ''/01/'' + CAST(YEAR(@CutOffDate) AS VARCHAR(4))
+
+-- Set the Job for the FACES Security database.
+DECLARE cCase CURSOR FOR 
+   SELECT     
+      DISTINCT d.CaseId, d.Claim, Status, k.Email Specialist, l.Email Reviewer 
+   FROM         
+      dbo.vwCases d
+         JOIN vwCaseServiceSummary e ON d.caseid = e.caseid
+            JOIN vwCodeList m ON e.RetirementTypeId = m.CodeId
+         JOIN dbo.tblResults A ON a.CaseId = d.CaseId
+         JOIN dbo.tblAdjustments b ON d.CaseId = b.CaseId 
+            JOIN dbo.vwCodeList c ON b.AddDeductCodeId = c.CodeId       
+         LEFT JOIN tblAnnuitySupplement h on d.Caseid = h.CaseId 
+         JOIN rvwUserList k on d.specialist = k.login
+         JOIN rvwUserList l on d.reviewer = l.login
+   WHERE     
+      d.Status = ''300'' AND 
+      c.CodeType = ''AddDeductCodes'' AND 
+      c.CodeAbbrev = ''67'' AND 
+      b.RunType = (SELECT o.RunType FROM tblRunResults o WHERE b.CaseId = o.CaseId AND btriggered = 1) AND -- incluse AS fromn the trigger run
+      e.CaseType IN(2, 3) AND 
+      RetirementTypeId <> (select [dbo].[fGetCodeId]("C","SepCodes")) AND -- exclude old 6C
+      EXISTS(SELECT 1 FROM tblRunResults f where d.caseid = f.caseid and (CalcRetirementType <> ''C'' OR CalcRetirementType IS NULL) AND bTriggered = 1) AND  -- exclude new 6C
+      a.ASSystem_BeginDate > a.AnnuityStartDate AND
+      ISNULL(ASUser_BeginDate, a.ASSystem_BeginDate) >= @CheckDate    
+
 BEGIN
-   EXEC msdb.dbo.sp_add_jobstep @job_name=@ReportName, 
-		 @step_name=@StepName,
-         @step_id=@StepId,  
-         @on_success_action=1, 
-         @on_fail_action=2
+   OPEN cCase 
+
+   FETCH FROM cCase INTO @nCaseId, @sClaim, @sStatus, @sSpecialist, @sReviewer
+
+   WHILE @@fetch_status = 0
+
+   BEGIN
+      
+      PRINT @sClaim
+      IF @sStatus = ''300''
+      BEGIN 
+         EXEC @rc = spSetStatus @CaseId = @nCaseId, @Status = ''210'', @Login  = ''<system>'', @Msg = @Msg OUTPUT
+      END
+      ELSE 
+      BEGIN  
+         EXEC @rc = spSetStatus @CaseId = @nCaseId, @Status = ''410'', @Login  = ''<system>'', @Msg = @Msg OUTPUT
+      END 
+
+      SET @sRecipients = ISNULL(@sSpecialist + '';'', '''') + ISNULL(@sReviewer + '';'', '''')
+      SET @sSubject = ''Case '' + @sClaim + '' moved back.''
+      SET @sMessage = ''The Annuity Supplement start date is after the current payment date.  Check the Contributions Tab Override box to remove the Annuity Supplement and re-submit the case to review.''
+
+      EXEC @rc = spQueueMail @Recipients = @sRecipients, @BCC = @BlindCopy, @Subject = @sSubject, @Message = @sMessage, @bTimeStamp = 1, @Msg = @Msg OUTPUT
+
+      FETCH FROM cCase INTO @nCaseId, @sClaim, @sStatus, @sSpecialist, @sReviewer
+   END
+   CLOSE cCase
+   DEALLOCATE cCase
 END
-GO
-
--- Cleanup Set Log Files job
-
-DECLARE @ReturnCode INT
-
-BEGIN TRANSACTION
-
-SELECT @ReturnCode = 0
-EXEC @ReturnCode = msdb.dbo.sp_update_jobstep @job_name=N'Set Log Files', 
-		@step_id=1, 
-		@command=N'exec spSetLogFiles ''Process Cases'', 5, ''ProcessCases.Log''
-	exec spSetLogFiles ''Process Cases'', 6, ''ProcessPayments.Log''
-	exec spSetLogFiles ''Process Cases'', 7, ''ProcessReissueCases.Log''
-	exec spSetLogFiles ''Process Mail'', 1, ''ProcessMail.Log'', 1
-	exec spSetLogFiles ''Process Mail'', 2, ''ProcessMail.Log'', 1
-	exec spSetLogFiles ''Process Mail'', 3, ''ProcessMail.Log'', 1
-	exec spSetLogFiles ''Process Mail'', 4, ''ProcessMail.Log'', 1
-	exec spSetLogFiles ''Process Mail'', 5, ''ProcessMail.Log'', 1
-	exec spSetLogFiles ''RBC Maintenance'', 1, ''RBC Maintenance.Log''
-	exec spSetLogFiles ''RBC Maintenance'', 2, ''RBC Maintenance.Log''
-	exec spSetLogFiles ''RBC Maintenance'', 3, ''RBC Maintenance.Log''
-	exec spSetLogFiles ''RBC Maintenance'', 4, ''RBC Maintenance.Log''
-	exec spSetLogFiles ''RBC Maintenance'', 5, ''RBC Maintenance.Log''
-	exec spSetLogFiles ''RBC Maintenance'', 6, ''RBC Maintenance.Log''
-	exec spSetLogFiles ''RBC Maintenance'', 7, ''RBC Maintenance.Log''
-	exec spSetLogFiles ''RBC Maintenance'', 8, ''RBC Maintenance.Log''
-	exec spSetLogFiles ''Process MF Data'', 1, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 2, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 3, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 4, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 5, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 6, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 7, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 8, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 9, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 10, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 11, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 12, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 13, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process MF Data'', 14, ''ProcessMFData.Log'', 2
-	exec spSetLogFiles ''Process LS Return'', 2, ''ProcessLSReturn.Log''
-	'
-IF (@@ERROR <> 0 OR @ReturnCode <> 0) 
-BEGIN
-	ROLLBACK TRANSACTION
+GO' 
 END
-ELSE 
-BEGIN
-	COMMIT TRANSACTION
-END
-GO
 
 
--- Delete "SQL Report for QCAB: PA Support System Self Service Transaction Count" SQL job report.
--- since "PA Support System Self Service Transaction Count" report is not required by RS.
-IF EXISTS(select   
-   1
-from 
-   msdb..sysjobs a 
-where
-   a.name  = 'SQL Report for QCAB: PA Support System Self Service Transaction Count' ) 
-BEGIN
-   EXEC msdb.dbo.sp_delete_job @job_name = 'SQL Report for QCAB: PA Support System Self Service Transaction Count'
-END
-GO
