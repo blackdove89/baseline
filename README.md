@@ -17,7 +17,7 @@ where
    
 IF @StepId > 0 
 BEGIN
-   EXEC msdb.dbo.sp_update_jobstep  @job_name = @ReportName,  @step_id = @StepId,	@command=N'DECLARE @nCaseId       INT
+   EXEC msdb.dbo.sp_update_jobstep  @job_name = @ReportName,  @step_id = @StepId,	@database_name = 'RETIRE', @command=N'DECLARE @nCaseId       INT
 DECLARE @sClaim        VARCHAR(100)
 DECLARE @sStatus       VARCHAR(10)
 DECLARE @sSpecialist   VARCHAR(200)
